@@ -1,0 +1,610 @@
+---
+title: "MA416 Project 1 – MLB Pitching Performance Analysis"
+subtitle: "AL Central Teams and Time Through the Order, 2024 Season"
+author: "MA416 Spring 2026"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE, fig.align='center')
+```
+
+```{r load-data, cache=TRUE}
+ab <- read.csv('C:/Users/aasmi/ma 416/Project/atbat_2024.csv', stringsAsFactors=FALSE)
+```
+
+---
+
+# Introduction
+
+This report analyzes MLB Statcast pitch-by-pitch data from the 2024 season, aggregated to the at-bat level. The dataset contains one row per at-bat, with the last pitch of each at-bat carrying the outcome. The primary response variable is `estimated_woba_using_speedangle` (xwOBA on contact), a Statcast metric that measures the expected weighted on-base average based on exit velocity and launch angle on balls put in play. Missing xwOBA values correspond to at-bats without contact (strikeouts, walks, HBP) and are excluded from analysis.
+
+Two inferential questions are investigated:
+
+1. **Section 1:** Do AL Central pitching staffs differ in the quality of contact they allow? A one-factor ANOVA compares mean xwOBA across five AL Central teams (CLE, CWS, DET, KC, MIN).
+
+2. **Section 2:** Does a pitcher's performance degrade as batters face them additional times through the batting order? A repeated-measures ANOVA compares mean xwOBA allowed by individual pitchers across the first, second, and third time through the order (TTO 1, 2, 3).
+
+In both cases, assumption violations motivate a non-parametric permutation test as a distribution-free follow-up (Section 3).
+
+---
+
+# Section 1: One-Factor ANOVA — AL Central Pitching
+
+## Design and Methodology
+
+**Groups (g = 5):** Kansas City Royals (KC), Detroit Tigers (DET), Minnesota Twins (MIN), Chicago White Sox (CWS), Cleveland Guardians (CLE).
+
+**At-bat assignment:** Each at-bat is assigned to the pitcher's team. When the inning is the top half, the home team is pitching; otherwise, the away team is pitching. Only at-bats where the pitcher's team is one of the five AL Central teams are included.
+
+**Multi-team pitchers:** Any pitcher who appeared for more than one AL Central team in 2024 is excluded to maintain clean group membership.
+
+**Response:** `estimated_woba_using_speedangle` (xwOBA on contact). At-bats with no contact (NA xwOBA) are excluded.
+
+**Hypothesis:**
+$$H_0: \mu_{CLE} = \mu_{CWS} = \mu_{DET} = \mu_{KC} = \mu_{MIN}$$
+$$H_a: \text{At least one pair of group means differs}$$
+
+```{r sec1-setup}
+al_central <- c("KC", "DET", "MIN", "CWS", "CLE")
+
+ab$pitcher_team <- ifelse(ab$inning_topbot == "Top", ab$home_team, ab$away_team)
+
+ab_alc <- ab[(ab$home_team %in% al_central | ab$away_team %in% al_central) &
+               ab$pitcher_team %in% al_central, ]
+
+pitcher_teams <- tapply(ab_alc$pitcher_team, ab_alc$pitcher, function(x) unique(x))
+multi_team    <- pitcher_teams[sapply(pitcher_teams, length) > 1]
+ab_alc        <- ab_alc[!ab_alc$pitcher %in% names(multi_team), ]
+ab_alc        <- ab_alc[!is.na(ab_alc$estimated_woba_using_speedangle), ]
+
+Y     <- ab_alc$estimated_woba_using_speedangle
+group <- ab_alc$pitcher_team
+
+dsplit <- split(Y, group)
+nj     <- sapply(dsplit, length)
+s2j    <- sapply(dsplit, var)
+xbarj  <- sapply(dsplit, mean)
+vj     <- nj - 1
+n      <- sum(nj)
+g      <- length(dsplit)
+alpha  <- 0.05
+```
+
+```{r sec1-group-table}
+group_tab <- data.frame(
+  Team         = names(nj),
+  N            = as.integer(nj),
+  Mean_xwOBA   = round(xbarj, 4),
+  Var_xwOBA    = round(s2j, 6)
+)
+rownames(group_tab) <- NULL
+knitr::kable(group_tab, col.names=c("Team", "n", "Mean xwOBA", "Variance"),
+             caption="At-bats per AL Central team with group means and variances.")
+```
+
+## Assumption 1: Normality (Shapiro-Francia Test)
+
+The Shapiro-Francia (SF) statistic is computed for each group. Let $X_{(1)} \leq \cdots \leq X_{(n)}$ be the ordered observations. Define Blom scores $m_k = \Phi^{-1}\!\left(\frac{k - 3/8}{n + 1/4}\right)$, normalized weights $a_k = m_k / \sqrt{\sum m_k^2}$, and
+
+$$W_{SF} = \frac{\left(\sum a_k X_{(k)}\right)^2}{\sum (X_k - \bar{X})^2}$$
+
+Values of $W_{SF}$ close to 1 indicate normality. The empirical p-value is obtained via Monte Carlo simulation: 1000 random normal samples of the same size $n$ are drawn, $W_{SF}$ is computed for each, and the p-value is the proportion $\leq$ the observed statistic (left-tail).
+
+```{r sec1-normality}
+mysf <- function(X){
+  n   <- length(X)
+  X   <- sort(X)
+  mk  <- qnorm((1:n - 3/8) / (n + 1/4), lower.tail=TRUE)
+  ak  <- mk / sqrt(sum(mk^2))
+  SST <- sum((X - mean(X))^2)
+  tau <- (sum(ak * X))^2
+  tau / SST
+}
+
+sf_obs <- sapply(dsplit, mysf)
+
+set.seed(416)
+nmc <- 1000
+sf_pvals <- sapply(names(dsplit), function(team){
+  X   <- dsplit[[team]]
+  n   <- length(X)
+  obs <- mysf(X)
+  mc_sf <- vapply(1:nmc, function(k) mysf(rnorm(n, 0, 1)), numeric(1))
+  mean(mc_sf <= obs)
+})
+
+sf_tab <- data.frame(
+  Team   = names(sf_obs),
+  SF_stat = round(sf_obs, 6),
+  p_value = round(sf_pvals, 6)
+)
+rownames(sf_tab) <- NULL
+knitr::kable(sf_tab, col.names=c("Team", "SF Statistic", "MC p-value (nmc=1000)"),
+             caption="Shapiro-Francia normality test results per AL Central team.")
+```
+
+```{r sec1-qq, fig.width=10, fig.height=6, fig.cap="QQ plots of standardized xwOBA per AL Central team. Dashed red line is the reference diagonal."}
+par(mfrow=c(2, 3))
+for(team in names(dsplit)){
+  X <- sort(dsplit[[team]])
+  n <- length(X)
+  Fx       <- seq(1, n, 1) / (n + 1)
+  S_ideal  <- qnorm(Fx, 0, 1, lower.tail=TRUE)
+  S_actual <- (X - mean(X)) / sd(X)
+  plot(S_ideal, S_actual, pch=16, cex=0.3, col='black',
+       xlab='Theoretical Quantiles', ylab='Sample Quantiles',
+       main=paste('QQ Plot -', team))
+  abline(0, 1, lty=2, col='red')
+}
+par(mfrow=c(1, 1))
+```
+
+**Interpretation:** All five SF p-values equal zero at $n \approx 6{,}200$ per group. At this scale, the SF test (and all normality tests) is hypersensitive by the Glivenko-Cantelli theorem — even minor structural departures from perfect normality produce $p = 0$. The QQ plots provide the more honest qualitative picture: systematic deviation from the diagonal indicates a right-skewed xwOBA distribution, consistent with the mass at zero from weak contact. Per the professor's guidance, in the super-large-$n$ regime we proceed with the parametric test while formally addressing the normality violation through the non-parametric follow-up in Section 3.
+
+## Assumption 2: Homoscedasticity (Bartlett's Test)
+
+Bartlett's test checks the null hypothesis of equal group variances. The test statistic is
+
+$$B = \frac{(n-g)\log\hat{s}_p^2 - \sum_{j=1}^{g} \nu_j \log s_j^2}{1 + \frac{1}{3(g-1)}\left(\sum_{j=1}^{g} \frac{1}{\nu_j} - \frac{1}{n-g}\right)}$$
+
+where $\nu_j = n_j - 1$, $\hat{s}_p^2 = \sum \nu_j s_j^2 / (n-g)$ is the pooled variance, and $B \sim \chi^2_{g-1}$ under $H_0$.
+
+```{r sec1-bartlett}
+sp2    <- sum(vj * s2j) / (n - g)
+Batop  <- (n - g) * log(sp2) - sum(vj * log(s2j))
+Babot  <- 1 + 1/(3*(g-1)) * (sum(1/vj) - 1/(n-g))
+Bastat <- Batop / Babot
+Bacrit <- qchisq(alpha, g-1, lower.tail=FALSE)
+Bapval <- pchisq(Bastat, g-1, lower.tail=FALSE)
+
+ba_tab <- data.frame(
+  Statistic = c("Bartlett B", "Critical value (chi-sq, df=4)", "p-value", "Pooled variance"),
+  Value     = c(round(Bastat, 4), round(Bacrit, 4), round(Bapval, 6), round(sp2, 6))
+)
+knitr::kable(ba_tab, col.names=c("Quantity", "Value"),
+             caption="Bartlett's test for equal group variances.")
+```
+
+**Interpretation:** Bartlett's test rejects equal variances ($p = 7 \times 10^{-6}$). However, with $n \approx 6{,}200$ per group, Bartlett's statistic is also hypersensitive. The group variances range from 0.127 to 0.144 — practically similar. Regardless, the formal rejection of homoscedasticity means Welch's heteroscedastic ANOVA is the appropriate test, as it relaxes the equal-variance assumption and uses a Satterthwaite-corrected denominator $df$.
+
+## Welch's Heteroscedastic One-Factor ANOVA
+
+When group variances are unequal, the standard one-factor ANOVA F-statistic is invalid. Welch's correction defines group weights $w_j = n_j / s_j^2$, a weighted grand mean $\bar{X}_H = \sum w_j \bar{X}_j / \sum w_j$, and
+
+$$F^* = \frac{\sum w_j(\bar{X}_j - \bar{X}_H)^2 / (g-1)}{1 + \frac{2(g-2)}{\nu^*}}$$
+
+where the Satterthwaite corrected denominator df is $\nu^* = \left(\sum w_j\right)^2 \Big/ \sum\!\left(w_j^2 / \nu_j\right)$. Under $H_0$, $F^* \sim F_{g-1,\, \nu^*}$ approximately.
+
+```{r sec1-welch}
+wj      <- nj / s2j
+xbarH   <- sum(wj * xbarj) / sum(wj)
+SSMstar <- sum(wj * (xbarj - xbarH)^2)
+MSMstar <- SSMstar / (g - 1)
+vstar   <- sum(wj)^2 / sum(wj^2 / vj)
+Fstar   <- MSMstar / (1 + 2*(g-2) / vstar)
+Fcrit_h <- qf(alpha, g-1, vstar, lower.tail=FALSE)
+pval_h  <- pf(Fstar, g-1, vstar, lower.tail=FALSE)
+
+welch_tab <- data.frame(
+  Quantity = c("MSM*", "nu* (denominator df)", "F*", "F critical (alpha=0.05)", "p-value"),
+  Value    = c(round(MSMstar,6), round(vstar,4), round(Fstar,4), round(Fcrit_h,4), round(pval_h,6))
+)
+knitr::kable(welch_tab, col.names=c("Quantity", "Value"),
+             caption="Welch's heteroscedastic one-factor ANOVA results.")
+```
+
+## Section 3: Non-Parametric Permutation Test
+
+**Motivation:** Normality is heavily violated at all five AL Central groups (all SF p-values = 0; QQ plots confirm right skew). A distribution-free permutation test is used as a follow-up that requires no distributional assumptions.
+
+**Test statistic:** $T = \max_j(\bar{X}_j) - \min_j(\bar{X}_j)$, the range of group means. Under $H_0$ all group means are equal so $T \approx 0$; large values give evidence against $H_0$ (right-tail test).
+
+**Method:** 10,000 Monte Carlo permutations of the group labels (keeping group sizes fixed). The empirical p-value is the proportion of permuted statistics $\geq T_{\text{obs}}$.
+
+```{r sec1-perm, cache=TRUE}
+myrange <- function(Y, group){
+  ds    <- split(Y, group)
+  xbarj <- sapply(ds, mean)
+  max(xbarj) - min(xbarj)
+}
+
+obs_stat <- myrange(Y, group)
+
+set.seed(416)
+nmc      <- 10000
+mc_stats <- vapply(1:nmc, function(k){
+  group_perm <- sample(group, length(group), replace=FALSE)
+  myrange(Y, group_perm)
+}, numeric(1))
+
+mycrit   <- quantile(mc_stats, 1 - alpha)
+emp_pval <- mean(mc_stats >= obs_stat)
+```
+
+```{r sec1-boot, cache=TRUE}
+set.seed(416)
+nboot    <- 10000
+ci_means <- list()
+for(team in names(dsplit)){
+  X      <- dsplit[[team]]
+  mymean <- vapply(1:nboot, function(k) mean(sample(X, length(X), replace=TRUE)), numeric(1))
+  ci_means[[team]] <- quantile(mymean, c(alpha/2, 1 - alpha/2))
+}
+```
+
+```{r sec1-power, cache=TRUE}
+set.seed(416)
+nmc_pow   <- 1000
+mystat_ha <- vapply(1:nmc_pow, function(k){
+  Ysim <- c(); gsim <- c()
+  for(team in names(dsplit)){
+    ni   <- nj[team]
+    mui  <- xbarj[team]
+    si   <- sqrt(s2j[team])
+    Ysim <- c(Ysim, rnorm(ni, mui, si))
+    gsim <- c(gsim, rep(team, ni))
+  }
+  myrange(Ysim, gsim)
+}, numeric(1))
+
+power_hat    <- mean(mystat_ha > mycrit)
+type2_hat    <- mean(mystat_ha <= mycrit)
+se_powerhat  <- sqrt(power_hat * (1 - power_hat) / nmc_pow)
+zcrit_ci     <- qnorm(alpha/2, lower.tail=FALSE)
+eps_powerhat <- zcrit_ci * se_powerhat
+mcci_power   <- c(power_hat - eps_powerhat, power_hat + eps_powerhat)
+```
+
+```{r sec1-perm-table}
+perm_tab <- data.frame(
+  Quantity = c("Observed T (range of means)", "Critical value (alpha=0.05)", "Empirical p-value", "Reject H0?"),
+  Value    = c(round(obs_stat,6), round(mycrit,6), round(emp_pval,6), as.character(obs_stat > mycrit))
+)
+knitr::kable(perm_tab, col.names=c("Quantity", "Value"),
+             caption="MC permutation test results (nmc = 10,000).")
+```
+
+```{r sec1-ci-table}
+ci_df <- do.call(rbind, lapply(names(ci_means), function(team){
+  data.frame(Team=team, Lower=round(ci_means[[team]][1],6), Upper=round(ci_means[[team]][2],6))
+}))
+knitr::kable(ci_df, col.names=c("Team","Lower 95% CI","Upper 95% CI"),
+             caption="Bootstrap 95% CIs for group means (nboot = 10,000).")
+```
+
+```{r sec1-power-table}
+pow_tab <- data.frame(
+  Quantity = c("power_hat", "type2_hat", "Wald 95% CI lower", "Wald 95% CI upper"),
+  Value    = c(round(power_hat,4), round(type2_hat,4), round(mcci_power[1],4), round(mcci_power[2],4))
+)
+knitr::kable(pow_tab, col.names=c("Quantity","Value"),
+             caption="Power estimation under Ha* (nmc_pow = 1,000) with Wald CI.")
+```
+
+```{r sec1-plot, fig.width=7, fig.height=5, fig.cap="MC permutation null distribution for the range statistic T. Red solid line: observed statistic. Blue dashed line: critical value (alpha = 0.05)."}
+plot(density(mc_stats), col='black', lwd=2,
+     main='Permutation Null Distribution of Range Statistic',
+     xlab='Range of Group Means (T)', ylab='Density')
+abline(v=obs_stat, col='red',  lwd=2, lty=1)
+abline(v=mycrit,   col='blue', lwd=2, lty=2)
+legend('topright',
+       legend=c('Null Distribution', 'Observed T', 'Critical Value'),
+       col=c('black','red','blue'), lwd=2, lty=c(1,1,2))
+```
+
+**Interpretation:** Both Welch's heteroscedastic ANOVA ($F^* = 4.49$, $p = 0.0013$) and the non-parametric permutation test ($T_{\text{obs}} = 0.0251$, $p = 0.0021$) reject $H_0$ at $\alpha = 0.05$, providing consistent evidence that mean xwOBA allowed is not equal across all five AL Central teams in 2024.
+
+The bootstrap 95% CIs reveal where the differences lie: DET pitchers allowed the lowest mean xwOBA ($\approx 0.297$, CI: 0.288–0.306) while CWS pitchers allowed the highest ($\approx 0.322$, CI: 0.313–0.332). These two intervals do not overlap, indicating a practically meaningful gap. CLE, KC, and MIN fall in between with partially overlapping CIs.
+
+The power of the permutation test is estimated at 92.7% (Wald 95% CI: 0.911–0.943), meaning that if the true group means are as observed in our 2024 sample, the test would correctly reject $H_0$ in approximately 93 out of 100 repeated experiments. This high power is expected given the very large sample sizes ($\approx 6{,}200$ per team). The agreement between the parametric and non-parametric approaches strengthens the conclusion: AL Central pitching staffs differ meaningfully in the quality of contact they allow, with Detroit's staff suppressing hard contact most effectively and Chicago's allowing the most.
+
+---
+
+# Section 2: Repeated-Measures ANOVA — Time Through the Order
+
+## Design and Methodology
+
+**Subject:** Individual pitcher (n = 311 eligible pitchers).
+
+**Within-subject factor:** Time through the order (TTO = 1, 2, 3). TTO is computed from scratch: within each game-pitcher combination, at-bats are sorted chronologically and TTO is incremented each time the pitcher faces the same batter again. TTO = 1 on the first at-bat against a batter, TTO = 2 on the second, etc.
+
+**Eligibility:** A pitcher is eligible only if they have at least one contact at-bat (non-NA xwOBA) at all three TTO levels. Eligibility is assessed from the full at-bat dataset before filtering to contact only. TTO values above 3 are excluded (same pitcher-batter pair meeting a 4th or 5th time).
+
+**Response:** Mean xwOBA on contact per (pitcher, TTO) cell. Each pitcher contributes exactly one observation per TTO level (their mean xwOBA across all contact at-bats at that level), yielding an $n \times g = 311 \times 3$ data matrix $\mathbf{X}$.
+
+**Hypothesis:**
+$$H_0: \mu_{TTO1} = \mu_{TTO2} = \mu_{TTO3}$$
+$$H_a: \text{At least one TTO level mean differs}$$
+
+```{r sec2-setup}
+tto_per_pitcher <- tapply(ab$TTO, ab$pitcher, function(x) sort(unique(x)))
+eligible        <- names(tto_per_pitcher)[sapply(tto_per_pitcher, function(x) all(c(1,2,3) %in% x))]
+ab_elig         <- ab[ab$pitcher %in% eligible & ab$TTO %in% c(1,2,3) &
+                        !is.na(ab$estimated_woba_using_speedangle), ]
+
+pitcher_tto_mean <- tapply(ab_elig$estimated_woba_using_speedangle,
+                           list(ab_elig$pitcher, ab_elig$TTO), mean)
+pitcher_tto_mean <- pitcher_tto_mean[complete.cases(pitcher_tto_mean), ]
+
+T1 <- pitcher_tto_mean[, 1]
+T2 <- pitcher_tto_mean[, 2]
+T3 <- pitcher_tto_mean[, 3]
+
+X      <- cbind(T1, T2, T3)
+n2     <- nrow(X)
+g2     <- ncol(X)
+alpha  <- 0.05
+```
+
+```{r sec2-desc-table}
+desc_tab <- data.frame(
+  TTO       = c("TTO 1", "TTO 2", "TTO 3"),
+  N_pitchers = rep(n2, 3),
+  Mean_xwOBA = round(colMeans(X), 6)
+)
+knitr::kable(desc_tab, col.names=c("TTO Level", "n (pitchers)", "Mean xwOBA"),
+             caption=paste0("Eligible pitchers (n = ", n2, ") with TTO column means."))
+```
+
+## Assumption 1: Normality
+
+The same Shapiro-Francia procedure is applied to each TTO column. Empirical p-values use 10,000 MC samples.
+
+```{r sec2-normality}
+sf_obs2 <- c(mysf(T1), mysf(T2), mysf(T3))
+names(sf_obs2) <- c('TTO1', 'TTO2', 'TTO3')
+
+set.seed(416)
+nmc2 <- 10000
+sf_pvals2 <- sapply(list(T1, T2, T3), function(X){
+  obs   <- mysf(X)
+  n_loc <- length(X)
+  mc_sf <- vapply(1:nmc2, function(k) mysf(rnorm(n_loc, 0, 1)), numeric(1))
+  mean(mc_sf <= obs)
+})
+names(sf_pvals2) <- c('TTO1', 'TTO2', 'TTO3')
+
+sf_tab2 <- data.frame(
+  TTO     = c("TTO 1", "TTO 2", "TTO 3"),
+  SF_stat = round(sf_obs2, 6),
+  p_value = round(sf_pvals2, 6)
+)
+rownames(sf_tab2) <- NULL
+knitr::kable(sf_tab2, col.names=c("TTO Level", "SF Statistic", "MC p-value (nmc=10,000)"),
+             caption="Shapiro-Francia normality test results per TTO level.")
+```
+
+```{r sec2-qq, fig.width=9, fig.height=4, fig.cap="QQ plots of standardized mean xwOBA per TTO level. Dashed red line is the reference diagonal."}
+par(mfrow=c(1, 3))
+for(j in 1:g2){
+  Xj       <- sort(X[, j])
+  nj_loc   <- length(Xj)
+  Fx       <- seq(1, nj_loc, 1) / (nj_loc + 1)
+  S_ideal  <- qnorm(Fx, 0, 1, lower.tail=TRUE)
+  S_actual <- (Xj - mean(Xj)) / sd(Xj)
+  plot(S_ideal, S_actual, pch=16, cex=0.5, col='black',
+       xlab='Theoretical Quantiles', ylab='Sample Quantiles',
+       main=paste('QQ Plot - TTO', j))
+  abline(0, 1, lty=2, col='red')
+}
+par(mfrow=c(1, 1))
+```
+
+**Interpretation:** All three SF p-values equal zero at $n = 311$. The SF statistic for TTO 3 (0.745) is substantially lower than for TTO 1 (0.928) and TTO 2 (0.942), indicating a more pronounced departure from normality at the third time through the order. This is likely because the distribution of mean xwOBA at TTO 3 is noisier and more right-skewed due to the smaller and less stable sample of at-bats per pitcher. With $n = 311$ the SF test is hypersensitive and will reject for even minor structural departures. The QQ plots confirm non-normality but not a catastrophic departure. This normality violation motivates the non-parametric follow-up in Section 3.
+
+## Assumption 2: Sphericity (Mauchly's Test)
+
+Sphericity requires that the variances of all pairwise differences among TTO levels are equal: $\text{Var}(X^{(i)} - X^{(j)}) = \text{Var}(X^{(k)} - X^{(l)})$ for all $i \neq j$, $k \neq l$. Mauchly's test uses the sample covariance matrix $\hat{\Sigma} = \text{var}(\mathbf{X})$ and the centering matrix $\mathbf{C} = \mathbf{I}_g - \frac{1}{g}\mathbf{1}\mathbf{1}^\top$.
+
+Define $\hat{\sigma}^2 = \frac{1}{g}\text{tr}(\hat{\Sigma})$ and
+$$W = \frac{\det(\hat{\Sigma})}{\hat{\sigma}^{2g}}$$
+
+Two test statistics are used:
+
+$$M_o = -(n-1)\log W \sim \chi^2_{g(g-1)/2}$$
+
+$$M_b = -\left[(n-1) - \frac{2g+1}{6}\right]\log W \sim \chi^2_{g(g-1)/2 - 1}$$
+
+If sphericity is violated, the F-test df are adjusted using the Greenhouse-Geisser (GG) or Huynh-Feldt (HF) correction:
+
+$$\varepsilon_{GG} = \frac{\left[\text{tr}(\hat{\Sigma}_C)\right]^2}{(g-1)\,\text{tr}(\hat{\Sigma}_C^2)}, \qquad \varepsilon_{HF} = \frac{n(g-1)\varepsilon_{GG} - 2}{(g-1)\left[(n-1) - (g-1)\varepsilon_{GG}\right]}$$
+
+Decision rule: if $\varepsilon_{GG} \geq 0.75$, apply HF correction; otherwise apply GG correction.
+
+```{r sec2-mauchly}
+sighatx  <- var(X)
+ones     <- matrix(1, nrow=g2, ncol=g2)
+C        <- diag(g2) - (1/g2)*ones
+sighatc  <- C %*% sighatx %*% C
+sighat2  <- (1/g2) * sum(diag(sighatx))
+W        <- det(sighatx) / (sighat2^g2)
+
+M_stat_o <- -(n2-1) * log(W)
+M_stat_b <- -((n2-1) - (2*g2+1)/6) * log(W)
+mpval_o  <- pchisq(M_stat_o, g2*(g2-1)/2,     lower.tail=FALSE)
+mpval_b  <- pchisq(M_stat_b, g2*(g2-1)/2 - 1, lower.tail=FALSE)
+
+eps_gg <- (sum(diag(sighatc)))^2 / ((g2-1) * sum(diag(sighatc %*% sighatc)))
+eps_hf <- (n2*(g2-1)*eps_gg - 2) / ((g2-1)*(n2-1) - (g2-1)*eps_gg)
+
+if(eps_gg >= 0.75){
+  eps_use      <- eps_hf
+  eps_label    <- "HF"
+} else {
+  eps_use      <- eps_gg
+  eps_label    <- "GG"
+}
+
+mauch_tab <- data.frame(
+  Quantity = c("W (Mauchly statistic)", "M_o", "p-value (M_o)", "M_b", "p-value (M_b)",
+               "eps_GG", "eps_HF", "Correction applied"),
+  Value    = c(round(W,6), round(M_stat_o,4), round(mpval_o,6),
+               round(M_stat_b,4), round(mpval_b,6),
+               round(eps_gg,5), round(eps_hf,5), eps_label)
+)
+knitr::kable(mauch_tab, col.names=c("Quantity","Value"),
+             caption="Mauchly's sphericity test results and epsilon corrections.")
+```
+
+**Interpretation:** Both Mauchly statistics are extreme ($M_o = 416.72$, $M_b = 415.16$, both $p \approx 0$), providing overwhelming evidence against sphericity. The variances of the pairwise TTO differences are not equal. Since $\varepsilon_{GG} = 0.687 < 0.75$, the Greenhouse-Geisser correction is applied, adjusting the numerator df to $\nu_{MSM} = (g-1)\varepsilon_{GG} = 1.37$ and the denominator df to $\nu_{MSE} = (n-1)(g-1)\varepsilon_{GG} = 426.00$ for a more conservative $F$-test.
+
+## RM-ANOVA
+
+The total variation in $\mathbf{X}$ is partitioned as $SST = SSM + SSS + SSE$, where SSM captures the between-TTO effect, SSS captures between-pitcher variation, and SSE is the residual:
+
+$$SST = s^2_{\text{all}}(ng - 1), \quad SSM = n\sum_{j=1}^{g}(\bar{X}_{\cdot j} - \bar{\bar{X}})^2, \quad SSS = g\sum_{i=1}^{n}(\bar{X}_{i\cdot} - \bar{\bar{X}})^2$$
+
+$$\mathbf{E} = \mathbf{X} - \bar{X}_{i\cdot} - \bar{X}_{\cdot j} + \bar{\bar{X}}, \quad SSE = \sum_{i,j} E_{ij}^2$$
+
+$$F = \frac{MSM}{MSE} = \frac{SSM/(g-1)}{SSE/[(n-1)(g-1)]} \sim F_{g-1,\,(n-1)(g-1)} \text{ under } H_0$$
+
+```{r sec2-rmanova}
+xbarj2  <- colMeans(X)
+xbari2  <- rowMeans(X)
+xbarbar2 <- mean(X)
+s2all   <- var(c(T1, T2, T3))
+
+SST2 <- s2all * (n2*g2 - 1)
+SSM2 <- n2 * sum((xbarj2 - xbarbar2)^2)
+SSS2 <- g2 * sum((xbari2 - xbarbar2)^2)
+E2   <- X - xbari2 - matrix(xbarj2, n2, g2, byrow=TRUE) + xbarbar2
+SSE2 <- sum(E2^2)
+
+MSM2   <- SSM2 / (g2-1)
+MSE2   <- SSE2 / ((n2-1)*(g2-1))
+Fstat2 <- MSM2 / MSE2
+Fcrit2 <- qf(alpha, g2-1, (n2-1)*(g2-1), lower.tail=FALSE)
+pval2  <- pf(Fstat2, g2-1, (n2-1)*(g2-1), lower.tail=FALSE)
+
+v_msm         <- (g2-1) * eps_use
+v_mse         <- (n2-1) * (g2-1) * eps_use
+Fcrit_corr    <- qf(alpha, v_msm, v_mse, lower.tail=FALSE)
+pval_corrected <- pf(Fstat2, v_msm, v_mse, lower.tail=FALSE)
+
+ss_tab <- data.frame(
+  Source = c("Between TTO (SSM)", "Between Subjects (SSS)", "Residual (SSE)", "Total (SST)"),
+  SS     = round(c(SSM2, SSS2, SSE2, SST2), 6),
+  df_unc = c(g2-1, n2-1, (n2-1)*(g2-1), n2*g2-1),
+  MS     = round(c(MSM2, NA, MSE2, NA), 6)
+)
+knitr::kable(ss_tab, col.names=c("Source","SS","df (uncorrected)","MS"),
+             na.string="—", caption="RM-ANOVA sum of squares decomposition.")
+
+rm_tab <- data.frame(
+  Test         = c("Uncorrected", paste0(eps_label, "-corrected")),
+  F_stat       = round(c(Fstat2, Fstat2), 4),
+  df1          = round(c(g2-1, v_msm), 4),
+  df2          = round(c((n2-1)*(g2-1), v_mse), 4),
+  F_crit       = round(c(Fcrit2, Fcrit_corr), 4),
+  p_value      = round(c(pval2, pval_corrected), 6)
+)
+knitr::kable(rm_tab, col.names=c("Test","F statistic","df1","df2","F critical","p-value"),
+             caption=paste0("RM-ANOVA F-test results (uncorrected and ", eps_label, "-corrected)."))
+```
+
+## Section 3: Within-Subject Permutation Test
+
+**Motivation:** Normality is violated at all three TTO levels (all SF p-values = 0). The within-subject permutation test is distribution-free and preserves the repeated-measures structure by permuting TTO labels within each pitcher row rather than across all observations.
+
+**Test statistic:** $T = \max_j(\bar{X}_{\cdot j}) - \min_j(\bar{X}_{\cdot j})$, the range of TTO column means. Bootstrap 95% CIs are computed per TTO level. Power is estimated under $H_a^*$ where the true TTO column means and SDs match the observed sample.
+
+```{r sec2-perm, cache=TRUE}
+myrange_rm <- function(X){
+  xbarj <- colMeans(X)
+  max(xbarj) - min(xbarj)
+}
+
+obs_stat2 <- myrange_rm(X)
+
+set.seed(416)
+nmc3      <- 10000
+mc_stats2 <- vapply(1:nmc3, function(k){
+  Xperm <- t(apply(X, 1, sample))
+  myrange_rm(Xperm)
+}, numeric(1))
+
+mycrit2   <- quantile(mc_stats2, 1 - alpha)
+emp_pval2 <- mean(mc_stats2 >= obs_stat2)
+```
+
+```{r sec2-boot, cache=TRUE}
+set.seed(416)
+nboot2   <- 10000
+ci_tto   <- list()
+for(j in 1:g2){
+  Xcol   <- X[, j]
+  mymean <- vapply(1:nboot2, function(k) mean(sample(Xcol, length(Xcol), replace=TRUE)), numeric(1))
+  ci_tto[[j]] <- quantile(mymean, c(alpha/2, 1 - alpha/2))
+}
+```
+
+```{r sec2-power, cache=TRUE}
+set.seed(416)
+nmc_pow2   <- 1000
+mystat_ha2 <- vapply(1:nmc_pow2, function(k){
+  Xsim <- matrix(0, nrow=n2, ncol=g2)
+  for(j in 1:g2){
+    Xsim[, j] <- rnorm(n2, mean=xbarj2[j], sd=sd(X[, j]))
+  }
+  myrange_rm(Xsim)
+}, numeric(1))
+
+power_hat2    <- mean(mystat_ha2 > mycrit2)
+type2_hat2    <- mean(mystat_ha2 <= mycrit2)
+se_powerhat2  <- sqrt(power_hat2 * (1 - power_hat2) / nmc_pow2)
+zcrit_ci2     <- qnorm(alpha/2, lower.tail=FALSE)
+eps_powerhat2 <- zcrit_ci2 * se_powerhat2
+mcci_power2   <- c(power_hat2 - eps_powerhat2, power_hat2 + eps_powerhat2)
+```
+
+```{r sec2-perm-table}
+perm_tab2 <- data.frame(
+  Quantity = c("Observed T (range of TTO means)", "Critical value (alpha=0.05)", "Empirical p-value", "Reject H0?"),
+  Value    = c(round(obs_stat2,6), round(mycrit2,6), round(emp_pval2,6), as.character(obs_stat2 > mycrit2))
+)
+knitr::kable(perm_tab2, col.names=c("Quantity","Value"),
+             caption="Within-subject MC permutation test results (nmc = 10,000).")
+```
+
+```{r sec2-ci-table}
+tto_names <- c("TTO 1","TTO 2","TTO 3")
+ci_df2 <- data.frame(
+  TTO   = tto_names,
+  Lower = round(sapply(ci_tto, `[`, 1), 6),
+  Upper = round(sapply(ci_tto, `[`, 2), 6)
+)
+knitr::kable(ci_df2, col.names=c("TTO Level","Lower 95% CI","Upper 95% CI"),
+             caption="Bootstrap 95% CIs for TTO group means (nboot = 10,000).")
+```
+
+```{r sec2-power-table}
+pow_tab2 <- data.frame(
+  Quantity = c("power_hat", "type2_hat", "Wald 95% CI lower", "Wald 95% CI upper"),
+  Value    = c(round(power_hat2,4), round(type2_hat2,4), round(mcci_power2[1],4), round(mcci_power2[2],4))
+)
+knitr::kable(pow_tab2, col.names=c("Quantity","Value"),
+             caption="Power estimation under Ha* (nmc_pow = 1,000) with Wald CI.")
+```
+
+```{r sec2-plot, fig.width=7, fig.height=5, fig.cap="Within-subject permutation null distribution for the range statistic T. Red solid line: observed statistic. Blue dashed line: critical value (alpha = 0.05)."}
+plot(density(mc_stats2), col='black', lwd=2,
+     main='Within-Subject Permutation Null Distribution (TTO)',
+     xlab='Range of TTO Means (T)', ylab='Density')
+abline(v=obs_stat2, col='red',  lwd=2, lty=1)
+abline(v=mycrit2,   col='blue', lwd=2, lty=2)
+legend('topright',
+       legend=c('Null Distribution', 'Observed T', 'Critical Value'),
+       col=c('black','red','blue'), lwd=2, lty=c(1,1,2))
+```
+
+**Interpretation:** Both the GG-corrected RM-ANOVA ($F = 7.618$, $F_{\text{crit}} = 3.448$, $p = 0.0025$) and the within-subject permutation test ($T_{\text{obs}} = 0.0276$, critical value $= 0.0166$, $p = 0.0001$) reject $H_0$ at $\alpha = 0.05$, providing consistent evidence that mean xwOBA allowed changes significantly as pitchers face the batting order additional times within a game.
+
+The TTO column means increase monotonically: TTO 1 = 0.317, TTO 2 = 0.330, TTO 3 = 0.345. The bootstrap 95% CIs reveal the structure of this effect: TTO 1 (0.312, 0.323) and TTO 3 (0.329, 0.361) do not overlap, confirming a practically meaningful increase in xwOBA from the first to the third time through the order. TTO 2 (0.324, 0.336) sits between them with partial overlap on both sides, suggesting a gradual rather than sudden degradation.
+
+This pattern is consistent with the well-documented time-through-order penalty in baseball: batters gain a measurable advantage on repeated looks at a starting pitcher as they accumulate information on pitch selection and velocity. The power of the permutation test is estimated at 89.2% (Wald 95% CI: 0.873–0.911), indicating that if the true TTO means are as observed in our 2024 sample, the test would correctly reject $H_0$ in approximately 89 out of 100 repeated experiments. The agreement between the parametric and non-parametric results strengthens the conclusion: pitchers allow meaningfully more hard contact the further they advance through the batting order.
