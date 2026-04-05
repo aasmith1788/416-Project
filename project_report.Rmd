@@ -199,13 +199,14 @@ knitr::kable(welch_tab, col.names=c("Quantity", "Value"),
              caption="Welch's heteroscedastic one-factor ANOVA results.")
 ```
 
-## Section 3: Non-Parametric Permutation Test
+## Alternative Calculation: Permutation Test
 
-**Motivation:** Normality is heavily violated at all five AL Central groups (all SF p-values = 0; QQ plots confirm right skew). A distribution-free permutation test is used as a follow-up that requires no distributional assumptions.
+**Motivation:** Because the Shapiro-Francia tests and QQ plots indicate a severe violation of normality (right-skew) across all five AL Central groups, the standard parametric assumptions are not completely met. To fulfill the requirement for alternative calculations when assumptions fail, we present a distribution-free permutation test as a follow-up that requires no distributional assumptions.
 
 **Test statistic:** $T = \max_j(\bar{X}_j) - \min_j(\bar{X}_j)$, the range of group means. Under $H_0$ all group means are equal so $T \approx 0$; large values give evidence against $H_0$ (right-tail test).
 
-**Method:** 10,000 Monte Carlo permutations of the group labels (keeping group sizes fixed). The empirical p-value is the proportion of permuted statistics $\geq T_{\text{obs}}$.
+**Method:** 10,000 Monte Carlo permutations of the group labels (keeping group sizes fixed). The empirical p-value is the proportion of permuted statistics $\ge T_{\text{obs}}$.
+
 
 ```{r sec1-perm, cache=TRUE}
 myrange <- function(Y, group){
@@ -508,7 +509,7 @@ knitr::kable(rm_tab, col.names=c("Test","F statistic","df1","df2","F critical","
              caption=paste0("RM-ANOVA F-test results (uncorrected and ", eps_label, "-corrected)."))
 ```
 
-## Section 3: Within-Subject Permutation Test
+## Alternative Calculation: Within-Subject Permutation Test
 
 **Motivation:** Normality is violated at all three TTO levels (all SF p-values = 0). The within-subject permutation test is distribution-free and preserves the repeated-measures structure by permuting TTO labels within each pitcher row rather than across all observations.
 
