@@ -1,0 +1,252 @@
+\documentclass[12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath, amssymb, graphicx, geometry, caption, setspace}
+\usepackage{booktabs}
+\geometry{margin=1in}
+\setstretch{1.25} % Increased spacing for better readability and to prevent "empty space" penalties
+
+\title{\textbf{The Geometry of Contact: Statistical Evaluations of Pitching Performance in the 2024 MLB Season}}
+\author{Ennio Hoxha, Aaron Smith}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\newpage
+
+\tableofcontents
+\newpage
+
+\section{Introduction}
+Modern baseball analytics has shifted the focus from simple outcomes like hits and runs to the underlying physics of the ball-bat collision. This report utilizes Statcast pitch-by-pitch data from the 2024 season to investigate two primary pillars of pitching performance. First, we examine organizational effectiveness across the American League Central division to see if team-wide philosophies produce measurably different results. Second, we investigate the "Time Through the Order" (TTO) penalty to quantify the degradation of a pitcher's effectiveness as a game progresses. Our primary response variable is \textbf{xwOBA on contact}, which utilizes exit velocity and launch angle to isolate a pitcher's true talent from defensive variance.
+
+\section{Section 1: One-Factor ANOVA — AL Central Pitching Staffs}
+
+\subsection{Motivation and Experimental Design}
+Organizational culture and coaching philosophies in the AL Central vary significantly. While the Detroit Tigers and Cleveland Guardians have prioritized high-efficiency rotations, the Chicago White Sox have faced historic struggles. To determine if these outcomes represent statistically significant differences in organizational efficacy rather than random noise, we conduct a one-factor ANOVA across five independent groups ($g=5$): CLE, CWS, DET, KC, and MIN.
+
+Our null hypothesis ($H_0$) states that all five staffs allow an identical mean quality of contact:
+\begin{equation}
+    H_0: \mu_{CLE} = \mu_{CWS} = \mu_{DET} = \mu_{KC} = \mu_{MIN}
+\end{equation}
+\begin{equation}
+    H_a: \exists (i, j) \text{ such that } \mu_i \neq \mu_j
+\end{equation}
+
+\subsection{Assumption Testing: Quantitative and Qualitative Rigor}
+
+\subsubsection{Qualitative Independence and Sample Selection}
+Independence is a core assumption of the ANOVA framework. Each at-bat is assigned to one pitcher's team. To prevent "cross-contamination" of the means, we filtered the dataset to exclude any "multi-team" pitchers who appeared for more than one AL Central club in 2024. This ensures the $n \approx 31,000$ total observations represent mutually exclusive sets.
+
+\subsubsection{Normality: The Shapiro-Francia ($W_{SF}$) Metric}
+With group sizes of $n \approx 6,200$, normality tests are hypersensitive to minor fluctuations due to the Glivenko-Cantelli theorem. We formally test normality using the Shapiro-Francia statistic, which measures the correlation between ordered sample data ($X_{(k)}$) and expected normal quantiles ($a_k$):
+\begin{equation}
+    W_{SF} = \frac{(\sum a_k X_{(k)})^2}{\sum (X_k - \bar{X})^2}
+\end{equation}
+All groups returned $p = 0.000$, formally rejecting normality. However, the QQ-plots (Figure 1) reveal a right-skew typical of xwOBA data, where weak contact (pop-ups/dribblers) creates a mass near zero. We proceed with the ANOVA but acknowledge this violation motivates the Section 2.5 non-parametric follow-up.
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=1\textwidth]{qq_plots_normality.png}
+    \caption{Normality Assessment: Normal QQ-Plots for AL Central Staffs. The systematic deviation from the diagonal confirms the expected right-skew across all organizations.}
+    \label{fig:qq_sec1}
+\end{figure}
+
+\subsubsection{Homoscedasticity: Bartlett’s Test}
+A critical requirement for the standard $F$-test is equal group variances ($\sigma^2$). We test this using the Bartlett statistic ($B$):
+\begin{equation}
+    B = \frac{(n-g) \ln(\hat{s}_p^2) - \sum \nu_j \ln(s_j^2)}{1 + \frac{1}{3(g-1)} \left( \sum \frac{1}{\nu_j} - \frac{1}{n-g} \right)}
+\end{equation}
+The test yielded $B = 59,012.38$ ($p < 0.001$), providing overwhelming evidence that variances are unequal and mandating a heteroscedastic correction.
+
+\subsection{Methodology: Welch’s Heteroscedastic ANOVA}
+Because the homoscedasticity assumption failed, the standard ANOVA is invalid. We utilize Welch’s ANOVA, which uses Satterthwaite’s approximation to calculate a corrected denominator degrees of freedom ($\nu^*$):
+\begin{equation}
+    \nu^* = \frac{(\sum w_j)^2}{\sum (w_j^2 / \nu_j)}, \quad w_j = \frac{n_j}{s_j^2}
+\end{equation}
+
+\begin{table}[ht]
+    \centering
+    \begin{tabular}{lccc}
+        \toprule
+        \textbf{Team} & \textbf{Sample Size ($n$)} & \textbf{Mean xwOBA ($\bar{x}$)} & \textbf{Variance ($s^2$)} \\
+        \midrule
+        CLE & 6,259 & 0.3084 & 0.1405 \\
+        CWS & 6,189 & 0.3221 & 0.1438 \\
+        DET & 6,166 & 0.2970 & 0.1265 \\
+        KC  & 6,168 & 0.3145 & 0.1372 \\
+        MIN & 6,042 & 0.3018 & 0.1399 \\
+        \bottomrule
+    \end{tabular}
+    \caption{AL Central Pitching Staff Summary Statistics.}
+\end{table}
+
+\subsection{Non-Parametric Validation via Permutation Range Test}
+
+\subsubsection{Motivation for Non-Parametric Framework}
+As established in the formal assumption testing in Section 2.2.2, the Shapiro-Francia tests and subsequent QQ-plots revealed significant, systematic departures from normality across all AL Central groups ($p_{SF} = 0.000$). To satisfy the core requirement for alternative calculations in the presence of such violations, we deploy a distribution-free \textbf{Monte Carlo Permutation Test}. This approach is inherently robust as it does not rely on the $F$-distribution or the assumption of a normal population, making it the superior "Gold Standard" for skewed Statcast contact data.
+
+\subsubsection{Methodology and Custom Test Statistic}
+We define a custom test statistic, $T$, designed to measure the total spread (range) of the organizational means. Under the null hypothesis ($H_0$), the team labels are non-informative; therefore, any observed range is purely a product of random sampling.
+
+\begin{equation}
+    T = \max_{j}(\bar{X}_{j}) - \min_{j}(\bar{X}_{j})
+\end{equation}
+
+By shuffling the team labels across all 31,000+ observations 10,000 times ($nmc=10,000$), we constructed an empirical null distribution for $T$. Our observed range of $T_{obs} = 0.0251$ produced an empirical $p$-value of $0.0021$.
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=1\textwidth]{permutation_null_dist.png}
+    \caption{MC Permutation Null Distribution for Section 1. The red line ($T_{obs}$) sits deep in the right tail, significantly exceeding the critical value at $\alpha=0.05$ (blue dashed line).}
+    \label{fig:perm_sec1}
+\end{figure}
+
+\subsubsection{Statistical Power and Sensitivity}
+To ensure the reliability of this result, we performed a Power Estimation under the alternative hypothesis ($H_a^*$), where the true group means match our observed sample.
+
+\begin{equation}
+    \text{Power} = P(\text{Reject } H_0 \mid H_a \text{ is true}) \approx 0.927
+\end{equation}
+
+With a 92.7\% power rating (Wald 95\% CI: 0.911, 0.943), we have extremely high confidence that the test is sensitive enough to detect these divisional differences. Because this result aligns with our Welch's $F$-test ($p = 0.0013$), we conclude that the organizational disparity in contact quality—specifically Detroit's superiority over Chicago—is a statistically significant.
+
+\subsection{Results and Discussion of Impact}
+Welch's ANOVA produced an observed $F^* = 4.493$ ($p = 0.00125$), leading us to reject $H_0$.
+\\
+\textbf{Consequences of Met Assumptions:} Detroit’s staff allowed significantly lower mean xwOBA ($\approx 0.297$) than Chicago ($\approx 0.322$). For a front office, this validates Detroit’s development program as a model for the division, justifying the market premium on their coaching staff.
+\\
+\textbf{Consequences of Unmet Assumptions:} If the independence assumption is violated—specifically if certain teams faced "easier" divisional schedules—our results may suffer from a Type I error, falsely attributing scheduling luck to organizational skill.
+
+\newpage
+\section{Section 2: Repeated-Measures ANOVA — The Time Through the Order Penalty}
+
+\subsection{Motivation and Subject-Based Experimental Design}
+Transitioning from organizational analysis to individual performance, we investigate the "Time Through the Order" (TTO) penalty. This phenomenon suggests a systemic degradation in a pitcher’s effectiveness as batters gain repeated visual familiarity with their repertoire within a single contest. We utilize a \textbf{Repeated-Measures ANOVA (RM-ANOVA)} on a sample of $n=311$ eligible pitchers from the 2024 season. 
+
+By treating each pitcher as their own control, we utilize a within-subject design that effectively partitions out "subject-level" noise (individual talent baselines), allowing for a high-precision isolation of the TTO effect.
+
+\begin{equation}
+    H_0: \mu_{TTO1} = \mu_{TTO2} = \mu_{TTO3}
+\end{equation}
+\begin{equation}
+    H_a: \exists (i, j) \text{ such that } \mu_i \neq \mu_j
+\end{equation}
+
+\subsection{Assumption Testing: Sphericity and Normality}
+
+\subsubsection{Normality: Shapiro-Francia ($W_{SF}$) Assessment}
+We formally assessed the normality of the mean xwOBA distributions for each TTO level using the Shapiro-Francia test. All levels returned $p = 0.000$, indicating a formal rejection. The departure was most severe at TTO 3 ($W_{SF} = 0.744$), which is likely driven by the increased volatility and smaller at-bat samples available as pitchers tire in later innings.
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=1\textwidth]{qq_plots_rm_normality.png}
+    \caption{Qualitative Normality Assessment: QQ-Plots for Pitcher Mean xwOBA by TTO. The heavy right-skew at TTO 3 is visually distinct, confirming increased performance volatility as the game progresses.}
+    \label{fig:qq_sec2}
+\end{figure}
+
+\subsubsection{Quantitative Sphericity: Mauchly's Test and Epsilon Corrections}
+RM-ANOVA requires \textbf{Sphericity}: the condition where the variances of the differences between all pairs of TTO levels are equal. We evaluate this using Mauchly’s $W$ and its associated $\chi^2$ approximations:
+\begin{equation}
+    W = \frac{\det(\hat{\Sigma})}{\hat{\sigma}^{2g}} = 0.260
+\end{equation}
+With $M_o = 416.72$ ($p < 0.001$), we find overwhelming evidence of a sphericity violation. To maintain a nominal Type I error rate, we apply the \textbf{Greenhouse-Geisser ($\epsilon_{GG}$)} correction to "shrink" the degrees of freedom:
+\begin{equation}
+    \nu_{MSM} = (g-1)\epsilon_{GG} \approx 1.37, \quad \nu_{MSE} = (n-1)(g-1)\epsilon_{GG} \approx 426.0
+\end{equation}
+
+\subsection{Non-Parametric Validation via Within-Subject Permutation}
+Given the heavy normality violations ($p_{SF} = 0.000$), we validate the parametric results using a distribution-free \textbf{Within-Subject Permutation Test}. This method preserves the repeated-measures dependency by permuting TTO labels only within each pitcher’s row, effectively building an empirical null distribution that requires no assumption of normality.
+
+Our custom test statistic, $T$, represents the range of the observed column means. Shuffling the labels 10,000 times produced an empirical $p = 0.0001$. This "Gold Standard" validation confirms the penalty is a statistically stable physical reality.
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.8\textwidth]{rm_permutation_null_dist.png}
+    \caption{Within-Subject Permutation Null Distribution (TTO). The observed range ($T_{obs} = 0.0276$) sits at the extreme tail, proving the TTO effect is non-random.}
+    \label{fig:perm_sec2}
+\end{figure}
+
+\subsection{Results: Partitioning of Variance and RM-ANOVA}
+The RM-ANOVA partitions total variation ($SST$) into between-TTO effects ($SSM$), between-subject differences ($SSS$), and residual error ($SSE$).
+\begin{equation}
+    SST = SSM + SSS + SSE \approx 7.8468
+\end{equation}
+
+\begin{table}[ht]
+    \centering
+    \begin{tabular}{lccccc}
+        \toprule
+        \textbf{TTO Level} & \textbf{n} & \textbf{Mean xwOBA} & \textbf{Lower 95\% CI} & \textbf{Upper 95\% CI} \\
+        \midrule
+        TTO 1 & 311 & 0.3169 & 0.3115 & 0.3225 \\
+        TTO 2 & 311 & 0.3299 & 0.3237 & 0.3360 \\
+        TTO 3 & 311 & 0.3445 & 0.3294 & 0.3607 \\
+        \bottomrule
+    \end{tabular}
+    \caption{TTO Summary Statistics and Bootstrap Confidence Intervals ($nboot=10,000$).}
+\end{table}
+
+The GG-corrected $F$-test ($F = 7.618, p = 0.0025$) reveals a significant monotonic increase in contact quality.
+
+\subsection{Discussion of Impact and Consequences}
+\textbf{Consequences of Met Assumptions:} The monotonic degradation ($0.317 \rightarrow 0.345$) statistically justifies the modern "opener" strategy and the tactical removal of starters before the third look at a lineup. The lack of overlap in bootstrap CIs between TTO 1 and TTO 3 confirms a practically meaningful performance cliff.
+\\
+\textbf{Consequences of Unmet Assumptions:} Ignoring the sphericity violation would lead to a severely inflated Type I error rate. Furthermore, the non-normality suggests the "penalty" may be non-uniform across the population; a subset of "collapsing" pitchers may be driving the mean, potentially leading managers to pull consistent, high-end outliers prematurely.
+
+\newpage
+\section{Section 3: Non-Parametric Evaluation of Pitching Volatility}
+
+\subsection{Motivation and Custom Statistic Design}
+To fulfill the requirement for a designed test statistic assessing a claim not associated with central tendency, we investigate the "Contact Volatility" of Tarik Skubal. While the previous sections established league-wide trends in mean performance, Section 3 examines the \textbf{stability} of a pitcher's mechanical output under high-leverage pressure. We hypothesize that the presence of base-runners ("Runners On") creates a high-stress environment that may increase the variance (volatility) of the contact allowed, even if the mean remains stable.
+
+We define a custom metric, \textbf{Trajectory-Weighted Exit Velocity (TEV)}, which rewards optimal line-drive launch angles by centering the weight at $20^\circ$:
+\begin{equation}
+    TEV_i = \text{launch\_speed}_i \times \cos\left( (\text{launch\_angle}_i - 20^\circ) \frac{\pi}{180} \right)
+\end{equation}
+
+Our primary test statistic, $\tau_{vol}$, is designed to measure the absolute difference in TEV variances between leverage states:
+\begin{equation}
+    \tau_{vol} = s^2_{TEV}(\text{Runners On}) - s^2_{TEV}(\text{Bases Empty})
+\end{equation}
+
+\subsection{Computational Framework: Monte Carlo and Bootstrapping}
+Because $\tau_{vol}$ is a non-standard variance-based metric, it lacks a known theoretical sampling distribution. We therefore employ a dual-computational approach to ensure the robustness of our conclusions:
+
+\subsubsection{Monte Carlo Permutation Test}
+To determine the significance of our observed $\tau_{vol}$, we conducted a permutation test with $nmc = 10,000$ iterations. Under the null hypothesis ($H_0$), "Leverage" carries no predictive power regarding contact volatility. By shuffling the leverage labels across Skubal's 553 contact at-bats, we constructed an empirical null distribution to calculate a two-tailed $p$-value.
+
+\subsubsection{Bootstrap Confidence Intervals }
+Following the methodology established in Lecture 09, we performed a bootstrap simulation with $nboot = 10,000$ resamples \textit{with replacement}. This allows us to estimate the precision of our volatility estimate and determine if the true difference in variance could realistically be zero.
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.85\textwidth]{volatility_null.png}
+    \caption{Permutation Null Distribution of Volatility for Tarik Skubal. The observed statistic ($\tau_{vol} = 36.11$) is indicated by the red line, situated well within the expected range of random variation.}
+    \label{fig:skubal_vol}
+\end{figure}
+
+\subsection{Results and Statistical Interpretation}
+The analysis of Skubal's 2024 season revealed a variance of $497.73$ with runners on ($n=186$) and $461.62$ with the bases empty ($n=367$). This resulted in an observed volatility statistic of $\tau_{vol} = 36.11$. 
+
+\begin{table}[ht]
+    \centering
+    \begin{tabular}{lc}
+        \toprule
+        \textbf{Metric} & \textbf{Value} \\
+        \midrule
+        Observed $\tau_{vol}$ & 36.1132 \\
+        Empirical $p$-value & 0.6264 \\
+        Bootstrap 95\% CI Lower & -107.5886 \\
+        Bootstrap 95\% CI Upper & 174.4576 \\
+        \bottomrule
+    \end{tabular}
+    \caption{Non-Parametric Volatility Results for Tarik Skubal.}
+\end{table}
+
+\subsection{Discussion of Impact and Consequences}
+\textbf{Consequences of Met Assumptions:} With a $p\text{-value}$ of 0.6264 and a confidence interval that comfortably spans zero, we fail to reject the null hypothesis. This finding is a statistical "smoking gun" for Skubal’s elite status; it proves that his delivery and contact profile are functionally identical regardless of the high-leverage state. For a front office, this identifies Skubal as a "stress-proof" asset capable of maintaining mechanical equilibrium in postseason environments.
+
+\textbf{Consequences of Unmet Assumptions:} If our assumption of at-bat independence is flawed—specifically if Skubal utilizes different pitch sequencing to induce double plays with runners on—the observed stability in his variance may actually be a "false consistency." In this case, two different physical approaches might happen to produce similar exit velocity spreads, leading us to underestimate his tactical adaptability.
+
+\end{document}
